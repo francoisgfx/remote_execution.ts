@@ -32,7 +32,9 @@ if(remote_exec === null){
 }
 
 // Send python command to Unreal Engine
-remote_exec.run_command("print('hello')", 'ExecuteFile')
+remote_exec.run_command("print('hello')", 'ExecuteFile', (data)=>{
+    console.log("Response:", data);
+})
 
 // Close connection with Unreal Engine Node
 remote_exec.stop();
