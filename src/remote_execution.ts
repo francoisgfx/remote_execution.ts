@@ -128,7 +128,7 @@ export class RemoteExecution {
         }
     }
 
-    run_command(command:string, unattended:boolean=true, exec_mode:string=MODE_EXEC_FILE, raise_on_failure:boolean=false):object {
+    run_command(command:string, unattended:boolean=true, exec_mode:string=MODE_EXEC_FILE, callback?:Function, raise_on_failure:boolean=false) {
         /*
         Run a command remotely based on the current command connection.
 
@@ -136,16 +136,11 @@ export class RemoteExecution {
             command (string): The Python command to run remotely.
             unattended (bool): True to run this command in "unattended" mode (suppressing some UI).
             exec_mode (string): The execution mode to use as a string value (must be one of MODE_EXEC_FILE, MODE_EXEC_STATEMENT, or MODE_EVAL_STATEMENT).
+            callback (function): called function when getting response from remote node
             raise_on_failure (bool): True to raise a RuntimeError if the command fails on the remote target.
 
-        Returns:
-            dict: The result from running the remote command (see `command_result` from the protocol definition).
         */
-        let data = this._command_connection.run_command(command, unattended, exec_mode);
-        if (raise_on_failure && !data['success']){
-            throw new Error(`Remote Python Command failed! ${data['result']}.`);
-        }
-        return data
+        this._command_connection.run_command(command, unattended, exec_mode, callback, raise_on_failure);
     }
 
 }
@@ -327,7 +322,7 @@ class _RemoteExecutionBroadcastConnection {
 
         this._broadcast_socket.on('listening', () => {
             const address = this._broadcast_socket.address();
-            console.log(`server listening ${address.address}:${address.port}`);
+            console.log(`Server listening ${address.address}:${address.port}`);
 
             this._broadcast_listen_thread = setInterval(() => {
                 const now = _time_now()
@@ -337,12 +332,10 @@ class _RemoteExecutionBroadcastConnection {
         });
 
         this._broadcast_socket.on('message', (data, remote) => {
-            //console.log(remote.address + ':' + remote.port +' - ' + data.toString());
             this._handle_data(data);
         });
 
         this._broadcast_socket.bind(this._config.multicast_group_endpoint[1], this._config.multicast_bind_address, () => {
-            console.log("binding is done");
             this._broadcast_socket.addMembership(this._config.multicast_group_endpoint[0],'0.0.0.0');
         });
 
@@ -510,7 +503,7 @@ class _RemoteExecutionCommandConnection {
         }
     }
 
-    run_command(command:string, unattended:boolean, exec_mode:string){
+    run_command(command:string, unattended:boolean, exec_mode:string, callback?:Function, raise_on_failure:boolean=false){
         /*
         Run a command on the remote party.
 
@@ -518,9 +511,9 @@ class _RemoteExecutionCommandConnection {
             command (string): The Python command to run remotely.
             unattended (bool): True to run this command in "unattended" mode (suppressing some UI).
             exec_mode (string): The execution mode to use as a string value (must be one of MODE_EXEC_FILE, MODE_EXEC_STATEMENT, or MODE_EVAL_STATEMENT).
+            callback (function): called function when getting response from remote node
+            raise_on_failure (bool): True to raise a RuntimeError if the command fails on the remote target.
 
-        Returns:
-            dict: The result from running the remote command (see `command_result` from the protocol definition).
         */
         this._send_message(
             new _RemoteExecutionMessage(
@@ -534,16 +527,20 @@ class _RemoteExecutionCommandConnection {
                 }
             )
         );
-        let result:_RemoteExecutionMessage;
-        while (true) {
-            // TODO: add timeout here
-            if (this._result) {
-                result = this._result;
-                this._result = null;
-                break;
+
+        // Callback when getting response from remote Node
+        this._command_channel_socket.once("data", (data:Buffer) => {
+            // parsing the data
+            let message = this._receive_message(data, _TYPE_COMMAND_RESULT);
+            // raise on failure ? 
+            if (raise_on_failure && message.data !== null && !message.data['success']){
+                throw new Error(`Remote Python Command failed! ${message['result']}.`);
             }
-        }
-        return result.data;
+            // calling callback
+            if(callback && typeof callback === "function"){
+                callback(message.data);
+            }
+        });
     }
 
     _send_message(message:_RemoteExecutionMessage){
@@ -567,8 +564,8 @@ class _RemoteExecutionCommandConnection {
             The message that was received.
         */
        
-        //let data = this._command_channel_socket.bytesRead = 4096;
         if(data){
+            
             let message:_RemoteExecutionMessage = new _RemoteExecutionMessage(null, null);
             if(message.from_json_bytes(data) && message.passes_receive_filter(this._node_id) && message.type_ == expected_type){
                 return message;
@@ -597,9 +594,6 @@ class _RemoteExecutionCommandConnection {
 
         this._command_listen_socket.on("connection", (socket) => {
             this._command_channel_socket = socket;
-            this._command_channel_socket.on("data", (data) => {
-                this._receive_message(data, _TYPE_COMMAND_RESULT);
-            });
         });
 
 
@@ -768,64 +762,3 @@ function _time_now(now:number=null):number {
     return now ? now : new Date().getTime()
 }
 
-//module.exports = RemoteExecutionConfig;
-//module.exports = RemoteExecution;
-
-/*
-if (require.main === module){
-    let remote_exec = new RemoteExecution();
-    remote_exec.start();
-    console.log("Enter remote node ID to connect to: ");
-    
-
-}
-*/
-
-/*
-Built-in types
-These are the types which are built in TypeScript. They include number, string, boolean, void, null and undefined.
-let num: number = 5;  
-let isPresent: boolean = true;
-User-defined types
-The User-defined types include enum, class, interface, array, and tuple. We will discuss some of these later in this article.
-*/
-
-
-/*
-function ensureConnection(type: string) {
-		let socket;
-		let mayahost: string = config.get('hostname');
-		let port: string = config.get('mel.port');
-
-		socket = socket_mel;
-		port_mel = port;
-
-		if (socket instanceof Socket == true && socket.destroyed == false) {
-			Logger.info(`Already active : Port ${port} on Host ${mayahost} for ${type}`);
-			updateStatusBarItem(type);
-		} else {
-			socket = net.createConnection({ port: port, host: mayahost }, () => {
-				Logger.info(`Connected : Port ${port} on Host ${mayahost} for ${type}`);
-				updateStatusBarItem(type);
-			});
-			socket.on('error', function(error) {
-				let errorMsg = `Unable to connect using port ${port} on Host ${mayahost}   \nPlease run the below mel command in Maya\`s script editor 
-				commandPort -n "${mayahost}:${port}" -stp "mel" -echoOutput;
-				Error Code : ${error.code}`;
-				Logger.error(errorMsg);
-				sendError(error, error.code, 'socket')
-			});
-
-			socket.on('data', function(data: Buffer) {
-				Logger.response(cleanResponse(data));
-			});
-
-			socket.on('end', () => {
-				Logger.info(`Disconnected from server. ${type} | Port ${port} on Host ${mayahost}`);
-				updateStatusBarItem(type);
-			});
-		}
-		return socket;
-	}
-
-*/
