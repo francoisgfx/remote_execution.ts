@@ -43,7 +43,4 @@ remoteExec = null;
 ```
 
 ## Todo
-- check inline TODO
-- add doc to all class
-- convert doc to JSDOC https://code.visualstudio.com/Docs/languages/typescript#_jsdoc-support
 - implement logger
