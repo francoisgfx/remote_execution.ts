@@ -29,43 +29,53 @@ const MODE_EXEC_STATEMENT:string = 'ExecuteStatement' // eslint-disable-line
 // Evaluate the Python command as a single statement. This will evaluate a single statement and return the result. This mode cannot run files
 const MODE_EVAL_STATEMENT:string = 'EvaluateStatement' // eslint-disable-line
 
+/**
+ * Configuration data for establishing a remote connection with a UE4 instance running Python.
+ */
 export class RemoteExecutionConfig {
-  /*
-    Configuration data for establishing a remote connection with a UE4 instance running Python.
-    */
+  multicastTTL:number
+  multicastGroupEndpoint:any
+  multicastBindAddress:string
+  commandEndpoint:any
 
-  multicast_ttl:number
-  multicast_group_endpoint:any
-  multicast_bind_address:string
-  command_endpoint:any
-
-  constructor () {
-    this.multicast_ttl = DEFAULT_MULTICAST_TTL
-    this.multicast_group_endpoint = DEFAULT_MULTICAST_GROUP_ENDPOINT
-    this.multicast_bind_address = DEFAULT_MULTICAST_BIND_ADDRESS
-    this.command_endpoint = DEFAULT_COMMAND_ENDPOINT
+  /**
+   * The construction of the RemoteExecutionConfig class
+   *
+   * @param {number} multicastTTL Multicast TTL (0 is limited to the local host, 1 is limited to the local subnet)
+   * @param {any[]} multicastGroupEndpoint The multicast group endpoint tuple that the UDP multicast socket should join (must match the "Multicast Group Endpoint" setting in the Python plugin)
+   * @param {string} multicastBindAddress The adapter address that the UDP multicast socket should bind to, or 0.0.0.0 to bind to all adapters (must match the "Multicast Bind Address" setting in the Python plugin)
+   * @param {any[]} commandEndpoint The endpoint tuple for the TCP command connection hosted by this client (that the remote client will connect to)
+   */
+  constructor (multicastTTL:number = DEFAULT_MULTICAST_TTL, multicastGroupEndpoint:any[] = DEFAULT_MULTICAST_GROUP_ENDPOINT, multicastBindAddress:string = DEFAULT_MULTICAST_BIND_ADDRESS, commandEndpoint:any[] = DEFAULT_COMMAND_ENDPOINT) {
+    this.multicastTTL = multicastTTL
+    this.multicastGroupEndpoint = multicastGroupEndpoint
+    this.multicastBindAddress = multicastBindAddress
+    this.commandEndpoint = commandEndpoint
   }
 }
 
+/**
+ * A thread-safe set of remote execution "nodes" (UE4 instances running Python).
+ */
 class _RemoteExecutionBroadcastNodes {
-  /*
-    A thread-safe set of remote execution "nodes" (UE4 instances running Python).
-    */
   _remote_nodes: { [key:string]: any}
   _remote_nodes_lock:any
 
+  /**
+   * The constructor for the _RemoteExecutionBroadcastNodes class
+   *
+   */
   constructor () {
     this._remote_nodes = {}
     this._remote_nodes_lock = null
   }
 
-  get remote_nodes ():object[] {
-    /*
-        Get the current set of discovered remote "nodes" (UE4 instances running Python).
-
-        Returns:
-            list: A list of dicts containg the node ID and the other data.
-        */
+  /**
+   * Get the current set of discovered remote "nodes" (UE4 instances running Python).
+   *
+   * @returns {object[]} A list of dicts containg the node ID and the other data.
+   */
+  get remote_nodes (): object[] {
     const remoteNodesList:object[] = []
 
     for (const nodeId in this._remote_nodes) {
@@ -78,15 +88,14 @@ class _RemoteExecutionBroadcastNodes {
     return remoteNodesList
   }
 
-  update_remote_node (nodeId:string, nodeData:{}, now:number = null) {
-    /*
-        Update a remote node, replacing any existing data.
-
-        Args:
-            nodeId (str): The ID of the remote node (from its "pong" reponse).
-            nodeData (dict): The data representing this node (from its "pong" reponse).
-            now (float): The timestamp at which this node was last seen.
-        */
+  /**
+   * Update a remote node, replacing any existing data.
+   *
+   * @param {string} nodeId The ID of the remote node (from its "pong" reponse).
+   * @param {object} nodeData The data representing this node (from its "pong" reponse).
+   * @param {number} now The timestamp at which this node was last seen.
+   */
+  update_remote_node (nodeId:string, nodeData:{}, now:number = null): void {
     const _now:number = _timeNow(now)
     if (!Object.prototype.hasOwnProperty.call(this._remote_nodes, nodeId)) {
       console.log(`Found Node  ${nodeId}: ${JSON.stringify(nodeData)}`)
@@ -94,13 +103,12 @@ class _RemoteExecutionBroadcastNodes {
     this._remote_nodes[nodeId] = new _RemoteExecutionNode(nodeData, _now)
   }
 
-  timeout_remote_nodes (now:number) {
-    /*
-        Check to see whether any remote nodes should be considered timed-out, and if so, remove them from this set.
-
-        Args:
-            now (float): The current timestamp.
-        */
+  /**
+   * Check to see whether any remote nodes should be considered timed-out, and if so, remove them from this set.
+   *
+   * @param {number} now The current timestamp.
+   */
+  timeout_remote_nodes (now:number): void {
     const _now = _timeNow(now)
 
     for (const nodeId in this._remote_nodes) {
@@ -113,21 +121,23 @@ class _RemoteExecutionBroadcastNodes {
   }
 }
 
+/**
+ * A message sent or received by remote execution (on either the UDP or TCP connection), as UTF-8 encoded JSON.
+ */
 class _RemoteExecutionMessage {
-  /*
-    A message sent or received by remote execution (on either the UDP or TCP connection), as UTF-8 encoded JSON.
-
-    Args:
-        type_ (string): The type of this message (see the `_TYPE_` constants).
-        source (string): The ID of the node that sent this message.
-        dest (string): The ID of the destination node of this message, or None to send to all nodes (for UDP broadcast).
-        data (dict): The message specific payload data.
-    */
   type_:string
   source:string
   dest:string
   data:{}
 
+  /**
+   * The constructor for the _RemoteExecutionMessage class
+   *
+   * @param {string} type_ The type of this message (see the `_TYPE_` constants).
+   * @param {string} source The ID of the node that sent this message.
+   * @param {string} dest The ID of the destination node of this message, or None to send to all nodes (for UDP broadcast).
+   * @param {object} data The message specific payload data.
+   */
   constructor (type_:string, source:string, dest:string = null, data:{} = null) {
     this.type_ = type_
     this.source = source
@@ -135,26 +145,22 @@ class _RemoteExecutionMessage {
     this.data = data
   }
 
-  passes_receive_filter (nodeId:string) {
-    /*
-        Test to see whether this message should be received by the current node (wasn't sent to itself, and has a compatible destination ID).
-
-        Args:
-            nodeId (string): The ID of the local "node" (this session).
-
-        Returns:
-            bool: True if this message should be received by the current node, False otherwise.
-        */
+  /**
+   * Test to see whether this message should be received by the current node (wasn't sent to itself, and has a compatible destination ID).
+   *
+   * @param {string} nodeId The ID of the local "node" (this session).
+   * @returns {boolean} true if this message should be received by the current node, false otherwise.
+   */
+  passes_receive_filter (nodeId:string): boolean {
     return this.source !== nodeId && (!this.dest || this.dest === nodeId)
   }
 
-  to_json () {
-    /*
-        Convert this message to its JSON representation.
-
-        Returns:
-            str: The JSON representation of this message.
-        */
+  /**
+   * Convert this message to its JSON representation.
+   *
+   * @returns {string} The JSON representation of this message.
+   */
+  to_json (): string {
     if (!this.type_) {
       // throw new Error('"type" cannot be empty!');
       console.log('"type" cannot be empty!')
@@ -180,30 +186,25 @@ class _RemoteExecutionMessage {
     return JSON.stringify(jsonObj)
   }
 
-  to_jsonBytes () {
-    /*
-        Convert this message to its JSON representation as UTF-8 bytes.
-
-        Returns:
-            bytes: The JSON representation of this message as UTF-8 bytes.
-        */
-
+  /**
+   * Convert this message to its JSON representation as UTF-8 bytes.
+   *
+   * @returns {Buffer} The JSON representation of this message as UTF-8 bytes.
+   */
+  to_jsonBytes (): Buffer {
     // THIS IS NOT NECESSARY IN JS json is already utf8 encoded
     const jsonStr:string = this.to_json()
     const buffer:Buffer = Buffer.from(jsonStr, 'utf8')
     return buffer
   }
 
-  from_json (jsonStr:string) {
-    /*
-        Parse this message from its JSON representation.
-
-        Args:
-            jsonStr (str): The JSON representation of this message.
-
-        Returns:
-            bool: True if this message could be parsed, False otherwise.
-        */
+  /**
+   * Parse this message from its JSON representation.
+   *
+   * @param {string} jsonStr The JSON representation of this message.
+   * @returns {boolean} true if this message could be parsed, false otherwise.
+   */
+  from_json (jsonStr:string): boolean {
     try {
       const jsonObj:{} = JSON.parse(jsonStr)
       // Read and validate required protocol version information
@@ -225,30 +226,22 @@ class _RemoteExecutionMessage {
     return true
   }
 
-  from_jsonBytes (jsonBytes:Buffer) {
-    /*
-        Parse this message from its JSON representation as UTF-8 bytes.
-
-        Args:
-            jsonBytes (bytes): The JSON representation of this message as UTF-8 bytes.
-
-        Returns:
-            bool: True if this message could be parsed, False otherwise.
-        */
+  /**
+   * Parse this message from its JSON representation as UTF-8 bytes.
+   *
+   * @param {Buffer} jsonBytes The JSON representation of this message as UTF-8 bytes.
+   * @returns {boolean} true if this message could be parsed, false otherwise.
+   */
+  from_jsonBytes (jsonBytes:Buffer): boolean {
     const jsonStr:string = jsonBytes.toString()
     return this.from_json(jsonStr)
   }
 }
 
+/**
+ * A remote execution broadcast connection (for UDP based messaging and node discovery).
+ */
 class _RemoteExecutionBroadcastConnection {
-  /*
-    A remote execution broadcast connection (for UDP based messaging and node discovery).
-
-    Args:
-        config (RemoteExecutionConfig): Configuration controlling the connection settings.
-        nodeId (string): The ID of the local "node" (this session).
-    */
-
   _config:RemoteExecutionConfig
   _nodeId:string
   _nodes:_RemoteExecutionBroadcastNodes
@@ -257,6 +250,12 @@ class _RemoteExecutionBroadcastConnection {
   _broadcast_socket:dgram.Socket
   _broadcast_listen_thread:any
 
+  /**
+   * The constructor for the _RemoteExecutionBroadcastConnection class
+   *
+   * @param {RemoteExecutionConfig} config Configuration controlling the connection settings.
+   * @param {string} nodeId The ID of the local "node" (this session).
+   */
   constructor (config:RemoteExecutionConfig, nodeId:string) {
     this._config = config
     this._nodeId = nodeId
@@ -267,32 +266,30 @@ class _RemoteExecutionBroadcastConnection {
     this._broadcast_listen_thread = null
   }
 
+  /**
+   * Get the current set of discovered remote "nodes" (UE4 instances running Python).
+   *
+   * @returns {object[]} A list of object containg the node ID and the other data.
+   */
   get remote_nodes ():object[] {
-    /*
-        Get the current set of discovered remote "nodes" (UE4 instances running Python).
-
-        Returns:
-            list: A list of dicts containg the node ID and the other data.
-        */
     return this._nodes ? this._nodes.remote_nodes : []
   }
 
-  open () {
-    /*
-        Open the UDP based messaging and discovery connection. This will begin the discovey process for remote
-        "nodes" (UE4 instances running Python).
-        */
-
+  /**
+   * Open the UDP based messaging and discovery connection. This will begin the discovey process
+   * for remote "nodes" (UE4 instances running Python).
+   */
+  open (): void {
     this._running = true
     this._last_ping = 0
     this._nodes = new _RemoteExecutionBroadcastNodes()
     this._init_broadcast_socket()
   }
 
-  close () {
-    /*
-        Close the UDP based messaging and discovery connection. This will end the discovey process for remote "nodes" (UE4 instances running Python).
-        */
+  /**
+   * Close the UDP based messaging and discovery connection. This will end the discovey process for remote "nodes" (UE4 instances running Python).
+   */
+  close (): void {
     this._running = false
     if (this._broadcast_socket) {
       this._broadcast_socket.close()
@@ -302,19 +299,16 @@ class _RemoteExecutionBroadcastConnection {
     clearInterval(this._broadcast_listen_thread)
   }
 
-  _init_broadcast_socket () {
-    /*
-        Initialize the UDP based broadcast socket based on the current configuration.
-        */
+  /**
+   * Initialize the UDP based broadcast socket based on the current configuration.
+   */
+  _init_broadcast_socket (): void {
     this._broadcast_socket = dgram.createSocket(
       {
         type: 'udp4',
         reuseAddr: true
       }
     )
-    // this._broadcast_socket.setMulticastLoopback(true);
-    // this._broadcast_socket.setMulticastTTL(this._config.multicast_ttl);
-    // this._broadcast_socket.setRecvBufferSize(4096);
 
     this._broadcast_socket.on('listening', () => {
       const address = this._broadcast_socket.address()
@@ -331,43 +325,31 @@ class _RemoteExecutionBroadcastConnection {
       this._handle_data(data)
     })
 
-    this._broadcast_socket.bind(this._config.multicast_group_endpoint[1], this._config.multicast_bind_address, () => {
-      this._broadcast_socket.addMembership(this._config.multicast_group_endpoint[0], '0.0.0.0')
+    this._broadcast_socket.bind(this._config.multicastGroupEndpoint[1], this._config.multicastBindAddress, () => {
+      this._broadcast_socket.addMembership(this._config.multicastGroupEndpoint[0], '0.0.0.0')
     })
   }
 
-  /*
-    _init_broadcast_listen_thread(){
-        Threading is not necessary since everything is async
-    }
-    _run_broadcast_listen_thread(){
-        This is unecessary as the socket is using a callback at init time,
-        the ping and timeout check is done with setInterval when the socket open()
-    }
-    */
-
-  _broadcast_message (message:_RemoteExecutionMessage) {
-    /*
-        Broadcast the given message over the UDP socket to anything that might be listening.
-
-        Args:
-            message (_RemoteExecutionMessage): The message to broadcast.
-        */
+  /**
+   * Broadcast the given message over the UDP socket to anything that might be listening.
+   *
+   * @param {_RemoteExecutionMessage} message The message to broadcast.
+   */
+  _broadcast_message (message:_RemoteExecutionMessage): void {
     const data = message.to_json()
     this._broadcast_socket.send(
       data,
-      this._config.multicast_group_endpoint[1],
-      this._config.multicast_group_endpoint[0]
+      this._config.multicastGroupEndpoint[1],
+      this._config.multicastGroupEndpoint[0]
     )
   }
 
-  _broadcast_ping (now:number = null) {
-    /*
-        Broadcast a "ping" message over the UDP socket to anything that might be listening.
-
-        Args:
-            now (float): The current timestamp.
-        */
+  /**
+   * Broadcast a "ping" message over the UDP socket to anything that might be listening.
+   *
+   * @param {number} now The current timestamp.
+   */
+  _broadcast_ping (now:number = null): void {
     const _now = _timeNow(now)
     if (!this._last_ping || ((this._last_ping + _NODE_PING_SECONDS) < _now)) {
       this._last_ping = _now
@@ -375,56 +357,52 @@ class _RemoteExecutionBroadcastConnection {
     }
   }
 
-  broadcast_open_connection (remoteNodeId:string) {
-    /*
-        Broadcast an "open_connection" message over the UDP socket to be handled by the specified remote node.
-
-        Args:
-            remoteNodeId (string): The ID of the remote node that we want to open a command connection with.
-        */
+  /**
+   * Broadcast an "open_connection" message over the UDP socket to be handled by the specified remote node.
+   *
+   * @param {string} remoteNodeId The ID of the remote node that we want to open a command connection with.
+   */
+  broadcast_open_connection (remoteNodeId:string): void {
     this._broadcast_message(
       new _RemoteExecutionMessage(
         _TYPE_OPEN_CONNECTION,
         this._nodeId,
         remoteNodeId,
         {
-          command_ip: this._config.command_endpoint[0],
-          command_port: this._config.command_endpoint[1]
+          command_ip: this._config.commandEndpoint[0],
+          command_port: this._config.commandEndpoint[1]
         }
       )
     )
   }
 
-  broadcast_close_connection (remoteNodeId:string) {
-    /*
-        Broadcast a "close_connection" message over the UDP socket to be handled by the specified remote node.
-
-        Args:
-            remoteNodeId (string): The ID of the remote node that we want to close a command connection with.
-        */
+  /**
+   * Broadcast a "close_connection" message over the UDP socket to be handled by the specified remote node.
+   *
+   * @param {string} remoteNodeId The ID of the remote node that we want to close a command connection with.
+   */
+  broadcast_close_connection (remoteNodeId:string): void {
     this._broadcast_message(new _RemoteExecutionMessage(_TYPE_CLOSE_CONNECTION, this._nodeId, remoteNodeId))
   }
 
-  _handle_data (data:Buffer) {
-    /*
-        Handle data received from the UDP broadcast socket.
-
-        Args:
-            data (bytes): The raw bytes received from the socket.
-        */
+  /**
+   * Handle data received from the UDP broadcast socket.
+   *
+   * @param {Buffer} data The raw bytes received from the socket.
+   */
+  _handle_data (data:Buffer): void {
     const message = new _RemoteExecutionMessage(null, null)
     if (message.from_jsonBytes(data)) {
       this._handle_message(message)
     }
   }
 
-  _handle_message (message:_RemoteExecutionMessage) {
-    /*
-        Handle a message received from the UDP broadcast socket.
-
-        Args:
-            message (_RemoteExecutionMessage): The message received from the socket.
-        */
+  /**
+   * Handle a message received from the UDP broadcast socket.
+   *
+   * @param {_RemoteExecutionMessage} message The message received from the socket.
+   */
+  _handle_message (message:_RemoteExecutionMessage): void {
     if (!message.passes_receive_filter(this._nodeId)) {
       return
     }
@@ -435,17 +413,19 @@ class _RemoteExecutionBroadcastConnection {
     console.log(`Unhandled remote execution message type ${message.type_}`)
   }
 
-  _handle_pong_message (message:_RemoteExecutionMessage) {
-    /*
-        Handle a "pong" message received from the UDP broadcast socket.
-
-        Args:
-            message (_RemoteExecutionMessage): The message received from the socket.
-        */
+  /**
+   * Handle a "pong" message received from the UDP broadcast socket.
+   *
+   * @param {_RemoteExecutionMessage} message The message received from the socket.
+   */
+  _handle_pong_message (message:_RemoteExecutionMessage): void {
     this._nodes.update_remote_node(message.source, message.data)
   }
 }
 
+/**
+ * A remote execution command connection (for TCP based command processing).
+ */
 class _RemoteExecutionCommandConnection {
   _config:RemoteExecutionConfig
   _nodeId:string
@@ -455,6 +435,13 @@ class _RemoteExecutionCommandConnection {
   _nodes:_RemoteExecutionBroadcastNodes
   _result:_RemoteExecutionMessage
 
+  /**
+   * The constructor for the _RemoteExecutionCommandConnection class
+   *
+   * @param {RemoteExecutionConfig} config Configuration controlling the connection settings.
+   * @param {string} nodeId The ID of the local "node" (this session).
+   * @param {string} remoteNodeId The ID of the remote "node" (the UE4 instance running Python).
+   */
   constructor (config:RemoteExecutionConfig, nodeId:string, remoteNodeId:string) {
     this._config = config
     this._nodeId = nodeId
@@ -465,25 +452,23 @@ class _RemoteExecutionCommandConnection {
     this._result = null
   }
 
-  open (broadcastConnection:_RemoteExecutionBroadcastConnection) {
-    /*
-        Open the TCP based command connection, and wait to accept the connection from the remote party.
-
-        Args:
-            broadcastConnection (_RemoteExecutionBroadcastConnection): The broadcast connection to send UDP based messages over.
-        */
+  /**
+   * Open the TCP based command connection, and wait to accept the connection from the remote party.
+   *
+   * @param {_RemoteExecutionBroadcastConnection} broadcastConnection The broadcast connection to send UDP based messages over.
+   */
+  open (broadcastConnection:_RemoteExecutionBroadcastConnection): void {
     this._nodes = new _RemoteExecutionBroadcastNodes()
     this._init_command_listen_socket()
     this._try_accept(broadcastConnection)
   }
 
-  close (broadcastConnection:_RemoteExecutionBroadcastConnection) {
-    /*
-        Close the TCP based command connection, attempting to notify the remote party.
-
-        Args:
-            broadcastConnection (_RemoteExecutionBroadcastConnection): The broadcast connection to send UDP based messages over.
-        */
+  /**
+   * Close the TCP based command connection, attempting to notify the remote party.
+   *
+   * @param {_RemoteExecutionBroadcastConnection} broadcastConnection The broadcast connection to send UDP based messages over.
+   */
+  close (broadcastConnection:_RemoteExecutionBroadcastConnection): void {
     broadcastConnection.broadcast_close_connection(this._remoteNodeId)
     if (this._command_channel_socket) {
       this._command_channel_socket.destroy()
@@ -495,18 +480,16 @@ class _RemoteExecutionCommandConnection {
     }
   }
 
-  run_command (command:string, unattended:boolean, execMode:string, callback?:Function, raiseOnFailure:boolean = false) {
-    /*
-        Run a command on the remote party.
-
-        Args:
-            command (string): The Python command to run remotely.
-            unattended (bool): True to run this command in "unattended" mode (suppressing some UI).
-            execMode (string): The execution mode to use as a string value (must be one of MODE_EXEC_FILE, MODE_EXEC_STATEMENT, or MODE_EVAL_STATEMENT).
-            callback (function): called function when getting response from remote node
-            raiseOnFailure (bool): True to raise a RuntimeError if the command fails on the remote target.
-
-        */
+  /**
+   * Run a command on the remote party.
+   *
+   * @param {string} command The Python command to run remotely.
+   * @param {boolean} unattended true to run this command in "unattended" mode (suppressing some UI).
+   * @param {string} execMode The execution mode to use as a string value (must be one of MODE_EXEC_FILE, MODE_EXEC_STATEMENT, or MODE_EVAL_STATEMENT).
+   * @param {Function} callback Called function when getting response from remote node
+   * @param {boolean} raiseOnFailure true to throw an Error if the command fails on the remote target.
+   */
+  run_command (command:string, unattended:boolean, execMode:string, callback?:Function, raiseOnFailure:boolean = false): void {
     this._send_message(
       new _RemoteExecutionMessage(
         _TYPE_COMMAND,
@@ -535,27 +518,23 @@ class _RemoteExecutionCommandConnection {
     })
   }
 
+  /**
+   * Send the given message over the TCP socket to the remote party.
+   *
+   * @param {_RemoteExecutionMessage} message The message to send.
+   */
   _send_message (message:_RemoteExecutionMessage) {
-    /*
-        Send the given message over the TCP socket to the remote party.
-
-        Args:
-            message (_RemoteExecutionMessage): The message to send.
-        */
     this._command_channel_socket.write(message.to_json())
   }
 
-  _receive_message (data:Buffer, expectedType:string) {
-    /*
-        Receive a message over the TCP socket from the remote party.
-
-        Args:
-            expectedType (string): The type of message we expect to receive.
-
-        Returns:
-            The message that was received.
-        */
-
+  /**
+   * Receive a message over the TCP socket from the remote party.
+   *
+   * @param {Buffer} data recieved message from remote node
+   * @param {string} expectedType The type of message we expect to receive.
+   * @returns {_RemoteExecutionMessage} The parsed message that was received.
+   */
+  _receive_message (data:Buffer, expectedType:string): _RemoteExecutionMessage {
     if (data) {
       const message:_RemoteExecutionMessage = new _RemoteExecutionMessage(null, null)
       if (message.from_jsonBytes(data) && message.passes_receive_filter(this._nodeId) && message.type_ === expectedType) {
@@ -565,12 +544,12 @@ class _RemoteExecutionCommandConnection {
     throw new Error('Remote party failed to send a valid response!')
   }
 
-  _init_command_listen_socket () {
-    /*
-        Initialize the TCP based command socket based on the current configuration, and set it to listen for an incoming connection.
-        */
-    const host = this._config.command_endpoint[0]
-    const port = this._config.command_endpoint[1]
+  /**
+   * Initialize the TCP based command socket based on the current configuration, and set it to listen for an incoming connection.
+   */
+  _init_command_listen_socket (): void {
+    const host = this._config.commandEndpoint[0]
+    const port = this._config.commandEndpoint[1]
 
     this._command_listen_socket = net.createServer() // TCP/IP socket
     this._command_listen_socket.listen(
@@ -586,13 +565,12 @@ class _RemoteExecutionCommandConnection {
     })
   }
 
-  _try_accept (broadcastConnection:_RemoteExecutionBroadcastConnection) {
-    /*
-        Wait to accept a connection on the TCP based command connection. This makes 6 attempts to receive a connection, waiting for 5 seconds between each attempt (30 seconds total).
-
-        Args:
-            broadcastConnection (_RemoteExecutionBroadcastConnection): The broadcast connection to send UDP based messages over.
-        */
+  /**
+   * Wait to accept a connection on the TCP based command connection. This makes 6 attempts to receive a connection, waiting for 5 seconds between each attempt (30 seconds total).
+   *
+   * @param {_RemoteExecutionBroadcastConnection} broadcastConnection The broadcast connection to send UDP based messages over.
+   */
+  _try_accept (broadcastConnection:_RemoteExecutionBroadcastConnection): void {
     for (let i = 0; i < 6; i++) {
       broadcastConnection.broadcast_open_connection(this._remoteNodeId)
       if (this._command_listen_socket) {
@@ -603,47 +581,48 @@ class _RemoteExecutionCommandConnection {
   }
 }
 
+/**
+ * A remote execution session. This class can discover remote "nodes" (UE4 instances running Python), and allow you to open a command channel to a particular instance.
+ */
 export class RemoteExecution {
-  /*
-    A remote execution session. This class can discover remote "nodes" (UE4 instances running Python), and allow you to open a command channel to a particular instance.
-
-    Args:
-        config (RemoteExecutionConfig): Configuration controlling the connection settings for this session.
-    */
   _config:RemoteExecutionConfig
   _broadcastConnection:_RemoteExecutionBroadcastConnection
   _command_connection:_RemoteExecutionCommandConnection
   _nodeId:string
 
+  /**
+   * The constructor for the RemoteExecution class
+   *
+   * @param {RemoteExecutionConfig} config Configuration controlling the connection settings for this session.
+   */
   constructor (config:RemoteExecutionConfig = new RemoteExecutionConfig()) {
     this._config = config
-    this._command_connection = null // new _RemoteExecutionCommandConnection();
+    this._command_connection = null
     this._nodeId = String(uuid())
-    this._broadcastConnection = null // new _RemoteExecutionBroadcastConnection(this._config, this._nodeId);
+    this._broadcastConnection = null
   }
 
-  get remote_nodes ():object[] {
-    /*
-        Get the current set of discovered remote "nodes" (UE4 instances running Python).
-
-        Returns:
-            list: A list of dicts containg the node ID and the other data.
-        */
+  /**
+   * Get the current set of discovered remote "nodes" (UE4 instances running Python).
+   *
+   * @returns {object[]} A list of object containg the node ID and the other data.
+   */
+  get remote_nodes (): object[] {
     return this._broadcastConnection ? this._broadcastConnection.remote_nodes : []
   }
 
+  /**
+   * Start the remote execution session. This will begin the discovey process for remote "nodes" (UE4 instances running Python).
+   */
   start () {
-    /*
-        Start the remote execution session. This will begin the discovey process for remote "nodes" (UE4 instances running Python).
-        */
     this._broadcastConnection = new _RemoteExecutionBroadcastConnection(this._config, this._nodeId)
     this._broadcastConnection.open()
   }
 
+  /**
+   * Stop the remote execution session. This will end the discovey process for remote "nodes" (UE4 instances running Python), and close any open command connection.
+   */
   stop () {
-    /*
-        Stop the remote execution session. This will end the discovey process for remote "nodes" (UE4 instances running Python), and close any open command connection.
-        */
     this.close_command_connection()
     if (this._broadcastConnection) {
       this._broadcastConnection.close()
@@ -651,93 +630,84 @@ export class RemoteExecution {
     }
   }
 
-  has_command_connection ():boolean {
-    /*
-        Check whether the remote execution session has an active command connection.
-
-        Returns:
-            bool: True if the remote execution session has an active command connection, False otherwise.
-        */
+  /**
+   * Check whether the remote execution session has an active command connection.
+   *
+   * @returns {boolean} true if the remote execution session has an active command connection, false otherwise.
+   */
+  has_command_connection (): boolean {
     return !!this._command_connection
   }
 
-  open_command_connection (remoteNodeId:string) {
-    /*
-        Open a command connection to the given remote "node" (a UE4 instance running Python), closing any command connection that may currently be open.
-
-        Args:
-            remoteNodeId (string): The ID of the remote node (this can be obtained by querying `remote_nodes`).
-        */
+  /**
+   * Open a command connection to the given remote "node" (a UE4 instance running Python), closing any command connection that may currently be open.
+   *
+   * @param {string} remoteNodeId The ID of the remote node (this can be obtained by querying `remote_nodes`).
+   */
+  open_command_connection (remoteNodeId:string): void {
     this._command_connection = new _RemoteExecutionCommandConnection(this._config, this._nodeId, remoteNodeId)
     this._command_connection.open(this._broadcastConnection)
   }
 
-  close_command_connection () {
-    /*
-        Close any command connection that may currently be open.
-        */
+  /**
+   * Close any command connection that may currently be open.
+   */
+  close_command_connection (): void {
     if (this._command_connection) {
       this._command_connection.close(this._broadcastConnection)
       this._command_connection = null
     }
   }
 
+  /**
+   * Run a command remotely based on the current command connection.
+   *
+   * @param {string} command The Python command to run remotely.
+   * @param {boolean} unattended true to run this command in "unattended" mode (suppressing some UI).
+   * @param {string} execMode The execution mode to use as a string value (must be one of MODE_EXEC_FILE, MODE_EXEC_STATEMENT, or MODE_EVAL_STATEMENT).
+   * @param {Function} callback called function when getting response from remote node
+   * @param {boolean} raiseOnFailure true to raise a RuntimeError if the command fails on the remote target
+   */
   run_command (command:string, unattended:boolean = true, execMode:string = MODE_EXEC_FILE, callback?:Function, raiseOnFailure:boolean = false) {
-    /*
-        Run a command remotely based on the current command connection.
-
-        Args:
-            command (string): The Python command to run remotely.
-            unattended (bool): True to run this command in "unattended" mode (suppressing some UI).
-            execMode (string): The execution mode to use as a string value (must be one of MODE_EXEC_FILE, MODE_EXEC_STATEMENT, or MODE_EVAL_STATEMENT).
-            callback (function): called function when getting response from remote node
-            raiseOnFailure (bool): True to raise a RuntimeError if the command fails on the remote target.
-
-        */
     this._command_connection.run_command(command, unattended, execMode, callback, raiseOnFailure)
   }
 }
 
+/**
+ * A discovered remote "node" (aka, a UE4 instance running Python).
+ */
 class _RemoteExecutionNode {
-  /*
-    A discovered remote "node" (aka, a UE4 instance running Python).
-
-    Args:
-        data (dict): The data representing this node (from its "pong" reponse).
-        now (float): The timestamp at which this node was last seen.
-    */
-
   data:object
   _last_pong:number
 
+  /**
+   * The constructor for the _RemoteExecutionNode class
+   *
+   * @param {object} data The data representing this node (from its "pong" reponse).
+   * @param {number} now The timestamp at which this node was last seen.
+   */
   constructor (data:object, now:number) {
     this.data = data
     this._last_pong = _timeNow(now)
   }
 
-  should_timeout (now:number):boolean {
-    /*
-        Check to see whether this remote node should be considered timed-out.
-
-        Args:
-            now (float): The current timestamp.
-
-        Returns:
-            bool: True of the node has exceeded the timeout limit (`_NODE_TIMEOUT_SECONDS`), False otherwise.
-        */
+  /**
+   * Check to see whether this remote node should be considered timed-out.
+   *
+   * @param {number} now The current timestamp.
+   * @returns {boolean} true of the node has exceeded the timeout limit (`_NODE_TIMEOUT_SECONDS`), false otherwise.
+   */
+  should_timeout (now:number): boolean {
     return (this._last_pong + _NODE_TIMEOUT_SECONDS) < _timeNow(now)
   }
 }
 
-function _timeNow (now:number = null):number {
-  /*
-    Utility function to resolve a potentially cached time value.
-
-    Args:
-        now (float): The cached timestamp, or None to return the current time.
-
-    Returns:
-        float: The cached timestamp (if set), otherwise the current time.
-    */
+/**
+ * Utility function to resolve a potentially cached time value.
+ *
+ * @param {number} now The cached timestamp, or None to return the current time.
+ * @returns {number} The cached timestamp (if set), otherwise the current time.
+ */
+function _timeNow (now:number = null): number {
   return now || new Date().getTime()
 }
