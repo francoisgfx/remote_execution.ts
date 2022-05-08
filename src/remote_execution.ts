@@ -496,9 +496,9 @@ class _RemoteExecutionCommandConnection {
         this._nodeId,
         this._remoteNodeId,
         {
-          command,
-          unattended,
-          execMode
+          'command': command,
+          'unattended': unattended,
+          'exec_mode': execMode
         }
       )
     )
